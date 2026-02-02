@@ -41,12 +41,17 @@ const SignInScreen = () => {
 
     setLoading(true);
     try {
+      console.log('🔐 Attempting sign in...');
       const response = await authApi.signin(username.trim(), password);
+      
+      console.log('📥 Sign in response:', response);
       
       if (response.success) {
         // Tokens are automatically saved by apiService
         // Check userType and navigate to appropriate dashboard
         const userType = response.data?.user?.userType || 'individual';
+        
+        console.log('✅ Sign in successful, user type:', userType);
         
         if (userType === 'company') {
           navigation.navigate('CompanyDashboard' as never);
@@ -56,10 +61,12 @@ const SignInScreen = () => {
           navigation.navigate('MainDashboard' as never);
         }
       } else {
-        Alert.alert('Error', response.error || 'Login failed. Please try again.');
+        console.error('❌ Sign in failed:', response.error);
+        Alert.alert('Sign In Failed', response.error || 'Login failed. Please try again.');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to sign in. Please check your credentials.');
+      console.error('❌ Sign in error:', error);
+      Alert.alert('Connection Error', error.message || 'Failed to connect to server. Please ensure the backend is running.');
     } finally {
       setLoading(false);
     }

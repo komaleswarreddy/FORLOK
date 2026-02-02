@@ -10,6 +10,19 @@ export interface IBooking extends Document {
   poolingOfferId?: string; // Reference to PoolingOffer
   rentalOfferId?: string; // Reference to RentalOffer
   route?: Route;
+  // Road-aware matching: Passenger pickup and drop road segments
+  passengerPickupSegment?: {
+    roadId: string;
+    direction: 'forward' | 'backward';
+    coordinates: { lat: number; lng: number };
+    estimatedTime: Date;
+  };
+  passengerDropSegment?: {
+    roadId: string;
+    direction: 'forward' | 'backward';
+    coordinates: { lat: number; lng: number };
+    estimatedTime: Date;
+  };
   date: Date;
   time?: string;
   duration?: number; // For rental, in hours
@@ -116,6 +129,25 @@ const bookingSchema = new Schema<IBooking>(
         lng: Number,
         index: Number,
       }], // Polyline coordinates for route matching
+    },
+    // Road-aware matching: Passenger pickup and drop road segments (additive)
+    passengerPickupSegment: {
+      roadId: String,
+      direction: { type: String, enum: ['forward', 'backward'] },
+      coordinates: {
+        lat: Number,
+        lng: Number,
+      },
+      estimatedTime: Date,
+    },
+    passengerDropSegment: {
+      roadId: String,
+      direction: { type: String, enum: ['forward', 'backward'] },
+      coordinates: {
+        lat: Number,
+        lng: Number,
+      },
+      estimatedTime: Date,
     },
     date: {
       type: Date,

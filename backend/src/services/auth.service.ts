@@ -373,6 +373,8 @@ class AuthService {
     tokens: { accessToken: string; refreshToken: string };
   }> {
     try {
+      logger.info(`🔍 Starting login for: ${username}`);
+      
       if (!password) {
         throw new AuthenticationError('Password is required');
       }
@@ -382,18 +384,24 @@ class AuthService {
       
       // Check if it's a phone number
       if (/^[\d\s\+\-\(\)]+$/.test(username)) {
+        logger.info(`📱 Searching by phone: ${username}`);
         const formattedPhone = formatPhoneNumber(username);
-        user = await User.findOne({ phone: formattedPhone }).select('+password');
+        user = await User.findOne({ phone: formattedPhone }).select('+password').maxTimeMS(5000);
+        if (user) logger.info(`✅ User found by phone`);
       }
       
       // If not found, try email
       if (!user && username.includes('@')) {
-        user = await User.findOne({ email: username.toLowerCase() }).select('+password');
+        logger.info(`📧 Searching by email: ${username}`);
+        user = await User.findOne({ email: username.toLowerCase() }).select('+password').maxTimeMS(5000);
+        if (user) logger.info(`✅ User found by email`);
       }
       
       // If still not found, try by name (username)
       if (!user) {
-        user = await User.findOne({ name: username }).select('+password');
+        logger.info(`👤 Searching by name: ${username}`);
+        user = await User.findOne({ name: username }).select('+password').maxTimeMS(5000);
+        if (user) logger.info(`✅ User found by name`);
       }
 
       if (!user) {
@@ -409,14 +417,19 @@ class AuthService {
         throw new AuthenticationError('Password not set. Please reset your password.');
       }
 
+      logger.info(`🔐 Verifying password for user: ${user.userId}`);
       const isPasswordValid = await user.comparePassword(password);
       if (!isPasswordValid) {
+        logger.warn(`❌ Invalid password for user: ${user.userId}`);
         throw new AuthenticationError('Invalid password');
       }
+      logger.info(`✅ Password verified for user: ${user.userId}`);
 
       // Update last login
+      logger.info(`💾 Updating last login for user: ${user.userId}`);
       user.lastLogin = new Date();
       await user.save();
+      logger.info(`✅ Last login updated`);
 
       // Generate tokens
       const payload: JWTPayload = {

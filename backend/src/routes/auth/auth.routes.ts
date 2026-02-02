@@ -8,6 +8,7 @@ import {
 } from '../../utils/validators';
 import { z } from 'zod';
 import { ApiResponse } from '../../types';
+import logger from '../../utils/logger';
 
 // Request body schemas
 const sendOTPSchema = z.object({
@@ -223,15 +224,42 @@ export async function authRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { username, password } = request.body as { username: string; password: string };
 
-      const result = await authService.loginUser(username, password);
+      logger.info(`🔐 Signin attempt for: ${username}`);
 
-      const response: ApiResponse = {
-        success: true,
-        message: 'Login successful',
-        data: result,
-      };
+      try {
+        // Add timeout wrapper
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Login request timeout after 10 seconds')), 10000);
+        });
 
-      return reply.status(200).send(response);
+        const loginPromise = authService.loginUser(username, password);
+
+        const result = await Promise.race([loginPromise, timeoutPromise]) as any;
+
+        logger.info(`✅ Signin successful for: ${username}`);
+
+        const response: ApiResponse = {
+          success: true,
+          message: 'Login successful',
+          data: result,
+        };
+
+        return reply.status(200).send(response);
+      } catch (error: any) {
+        logger.error(`❌ Signin failed for ${username}:`, error);
+        
+        // Return proper error response instead of hanging
+        if (error.message?.includes('timeout')) {
+          return reply.status(504).send({
+            success: false,
+            error: 'Request timeout - database may be slow or unreachable',
+            message: 'Login request took too long. Please try again.',
+          });
+        }
+
+        // Re-throw to let error handler process it
+        throw error;
+      }
     }
   );
 

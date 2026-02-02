@@ -1,8 +1,10 @@
 import TripLocation from '../models/TripLocation';
 import Booking from '../models/Booking';
+import PoolingOffer from '../models/PoolingOffer';
 import { NotFoundError, ConflictError } from '../utils/errors';
 import logger from '../utils/logger';
 import { reverseGeocode } from '../utils/maps';
+import roadAwareMatchingService from './road-aware-matching.service';
 
 class TrackingService {
   /**
@@ -64,6 +66,54 @@ class TrackingService {
         accuracy: data.accuracy,
         timestamp: new Date(),
       });
+
+      // NEW: Real-time route deviation handling for pooling trips
+      if (booking.serviceType === 'pooling' && booking.poolingOfferId) {
+        try {
+          // Get recent location updates (last 5 minutes) for deviation detection
+          const recentLocations = await TripLocation.find({
+            bookingId: data.bookingId,
+            timestamp: { $gte: new Date(Date.now() - 5 * 60 * 1000) }, // Last 5 minutes
+          })
+            .sort({ timestamp: -1 })
+            .limit(10);
+
+          if (recentLocations.length >= 3) {
+            // Prepare GPS coordinates for matching
+            const gpsCoordinates = recentLocations
+              .reverse() // Oldest first
+              .map((loc) => ({
+                lat: loc.location.lat,
+                lng: loc.location.lng,
+                timestamp: loc.timestamp.getTime(),
+              }));
+
+            // Get the pooling offer
+            const offer = await PoolingOffer.findOne({
+              offerId: booking.poolingOfferId,
+            });
+
+            if (offer && offer.roadSegments && offer.roadSegments.length > 0) {
+              // Check for route deviation
+              const deviationResult = await roadAwareMatchingService.handleRouteDeviation(
+                booking.poolingOfferId,
+                gpsCoordinates
+              );
+
+              if (deviationResult.isDeviated) {
+                logger.info(
+                  `⚠️ Route deviation detected for booking ${data.bookingId}, route updated with ${deviationResult.updatedSegments?.length} new segments`
+                );
+                // Route has been updated in the offer, ETAs recalculated
+                // Passengers will see updated route on next location fetch
+              }
+            }
+          }
+        } catch (error) {
+          logger.warn('Error checking route deviation:', error);
+          // Don't fail location update if deviation check fails
+        }
+      }
 
       logger.info(`Location updated for booking ${data.bookingId}: ${data.lat}, ${data.lng}`);
 

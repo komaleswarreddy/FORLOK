@@ -10,11 +10,33 @@
 //   - Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)
 // For production: Use your deployed backend URL
 
-// Default: localhost (works for emulator/simulator)
-// For physical device, change to your computer's IP address
-const API_BASE_URL = __DEV__
-  ? 'http://10.23.176.237:3000' // Your computer's IP for Expo physical device
-  : 'https://api.yaaryatra.com'; // Production URL
+// Get API URL from environment variables (app.json extra field)
+// For development: Use your computer's IP address for physical device testing
+// For production: Uses production URL from app.json
+import Constants from 'expo-constants';
+
+const getApiBaseUrl = (): string => {
+  // Check if we have environment variables from app.json
+  const extra = Constants.expoConfig?.extra;
+  
+  if (__DEV__) {
+    // Development mode
+    // For physical device: Replace with your computer's IP address
+    // Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)
+    // Example: 'http://192.168.1.100:3000'
+    const devUrl = extra?.apiBaseUrl || 'http://localhost:3000';
+    
+    // For Android emulator, use 10.0.2.2 instead of localhost
+    // For iOS simulator, localhost works fine
+    // For physical device, use your computer's IP
+    return devUrl;
+  } else {
+    // Production mode
+    return extra?.apiBaseUrlProduction || 'https://api.yaaryatra.com';
+  }
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 export const API_CONFIG = {
   BASE_URL: API_BASE_URL,

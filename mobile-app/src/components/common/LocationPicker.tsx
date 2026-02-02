@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
   },
   resultAddress: {
     fontSize: 14,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.regular,
     color: COLORS.text,
   },
   resultDetails: {
@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
   currentLocationText: {
     color: COLORS.white,
     fontSize: 16,
-    fontFamily: FONTS.medium,
+    fontFamily: FONTS.regular,
     marginLeft: SPACING.xs,
   },
   map: {

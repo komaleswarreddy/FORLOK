@@ -44,7 +44,9 @@
     "extra": {
       "eas": {
         "projectId": "faf2cd58-b758-4f8e-89bb-0c4981e14fc2"
-      }
+      },
+      "apiBaseUrl": "http://10.206.92.236:3000",
+      "apiBaseUrlProduction": "https://api.yaaryatra.com"
     }
   }
 }

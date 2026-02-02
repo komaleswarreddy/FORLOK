@@ -49,7 +49,11 @@ async function geocodeWithOpenStreetMap(address: string): Promise<GeocodeResult 
       throw new Error(`OpenStreetMap API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as Array<{
+      display_name: string;
+      lat: string;
+      lon: string;
+    }>;
 
     if (!data || data.length === 0) {
       return null;
@@ -90,7 +94,20 @@ async function geocodeWithGoogleMaps(address: string): Promise<GeocodeResult | n
       throw new Error(`Google Maps API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      status: string;
+      results?: Array<{
+        formatted_address: string;
+        geometry: {
+          location: { lat: number; lng: number };
+        };
+        address_components: Array<{
+          types: string[];
+          long_name: string;
+          short_name: string;
+        }>;
+      }>;
+    };
 
     if (data.status !== 'OK' || !data.results || data.results.length === 0) {
       return null;
@@ -147,18 +164,23 @@ async function reverseGeocodeWithOpenStreetMap(lat: number, lng: number): Promis
       throw new Error(`OpenStreetMap API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      address?: Record<string, string>;
+      display_name?: string;
+      lat?: string;
+      lon?: string;
+    };
 
     if (!data || !data.address) {
       return null;
     }
 
-    const addressParts = data.display_name.split(',');
+    const addressParts = (data.display_name || '').split(',');
 
     return {
-      address: data.display_name,
-      lat: parseFloat(data.lat),
-      lng: parseFloat(data.lon),
+      address: data.display_name || '',
+      lat: parseFloat(data.lat || '0'),
+      lng: parseFloat(data.lon || '0'),
       city: extractCity(addressParts),
       state: extractState(addressParts),
       pincode: extractPincode(addressParts),
@@ -186,7 +208,20 @@ async function reverseGeocodeWithGoogleMaps(lat: number, lng: number): Promise<G
       throw new Error(`Google Maps API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      status: string;
+      results?: Array<{
+        formatted_address: string;
+        geometry: {
+          location: { lat: number; lng: number };
+        };
+        address_components: Array<{
+          types: string[];
+          long_name: string;
+          short_name: string;
+        }>;
+      }>;
+    };
 
     if (data.status !== 'OK' || !data.results || data.results.length === 0) {
       return null;
@@ -280,7 +315,14 @@ export async function getRoutePolyline(
       throw new Error(`OSRM API error: ${response.statusText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as {
+      code: string;
+      routes?: Array<{
+        geometry: {
+          coordinates: Array<[number, number]>;
+        };
+      }>;
+    };
 
     if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) {
       logger.warn('No route found from OSRM, using direct line');

@@ -72,16 +72,21 @@ class ApiService {
     endpoint: string,
     options: RequestOptions = {}
   ): Promise<{ success: boolean; data?: T; error?: string; message?: string }> {
+    // Build URL and extract method outside try block so they're accessible in catch
+    const url = getApiUrl(endpoint);
+    const method = options.method || 'GET';
+    
     try {
       const {
-        method = 'GET',
         headers = {},
         body,
         requiresAuth = true,
       } = options;
 
-      // Build URL
-      const url = getApiUrl(endpoint);
+      // Validate URL
+      if (!url || !url.startsWith('http')) {
+        throw new Error(`Invalid API URL: ${url}. Check your API configuration.`);
+      }
 
       // Prepare headers
       const requestHeaders: HeadersInit = {
@@ -99,7 +104,7 @@ class ApiService {
 
       // Prepare request options
       const requestOptions: RequestInit = {
-        method,
+        method: method as RequestInit['method'],
         headers: requestHeaders,
       };
 
@@ -108,8 +113,34 @@ class ApiService {
         requestOptions.body = JSON.stringify(body);
       }
 
-      // Make request
-      const response = await fetch(url, requestOptions);
+      // Log request in development
+      if (__DEV__) {
+        console.log('🌐 API Request:', method, url);
+        console.log('📦 Request Body:', body ? JSON.stringify(body, null, 2) : 'none');
+      }
+
+      // Make request with timeout
+      const controller = new AbortController();
+      const timeoutMs = 30000; // 30 seconds
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          ...requestOptions,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Request timeout. Please check your connection.');
+        }
+        if (fetchError.message?.includes('Failed to fetch') || fetchError.message?.includes('NetworkError')) {
+          throw new Error('Cannot connect to server. Make sure the backend is running on http://localhost:3000');
+        }
+        throw fetchError;
+      }
 
       // Handle 401 Unauthorized - try to refresh token
       if (response.status === 401 && requiresAuth) {
@@ -133,10 +164,25 @@ class ApiService {
 
       return this.handleResponse<T>(response);
     } catch (error: any) {
-      console.error('API Request Error:', error);
+      console.error('❌ API Request Error:', error);
+      console.error('   URL:', url);
+      console.error('   Method:', method || options.method || 'GET');
+      console.error('   Error Details:', error);
+      
+      // Provide more helpful error messages
+      let errorMessage = error.message || 'Network error. Please check your connection.';
+      
+      if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+        errorMessage = 'Cannot connect to backend server. Please ensure:\n1. Backend is running (cd backend && npm start)\n2. Backend is accessible at http://localhost:3000\n3. No firewall is blocking the connection';
+      } else if (error.message?.includes('timeout')) {
+        errorMessage = 'Request timed out. The server may be slow or unreachable.';
+      } else if (error.message?.includes('CORS')) {
+        errorMessage = 'CORS error. Backend CORS configuration may need updating.';
+      }
+      
       return {
         success: false,
-        error: error.message || 'Network error. Please check your connection.',
+        error: errorMessage,
       };
     }
   }

@@ -9,6 +9,18 @@ export interface IPoolingOffer extends Document {
   rating: number;
   totalReviews: number;
   route: Route;
+  // Road-aware matching: Ordered list of road segments with direction and time
+  roadSegments?: Array<{
+    roadId: string;
+    direction: 'forward' | 'backward';
+    estimatedTime: Date;
+    coordinates: {
+      lat: number;
+      lng: number;
+    };
+    distance?: number; // in km
+    duration?: number; // in minutes
+  }>;
   date: Date;
   time: string;
   vehicle: {
@@ -87,6 +99,18 @@ const poolingOfferSchema = new Schema<IPoolingOffer>(
         index: Number, // Sequential index in the polyline
       }], // Polyline coordinates for route matching
     },
+    // Road-aware matching: Ordered list of road segments (additive, doesn't replace polyline)
+    roadSegments: [{
+      roadId: { type: String, required: true },
+      direction: { type: String, enum: ['forward', 'backward'], required: true },
+      estimatedTime: { type: Date, required: true },
+      coordinates: {
+        lat: { type: Number, required: true },
+        lng: { type: Number, required: true },
+      },
+      distance: Number, // in km
+      duration: Number, // in minutes
+    }],
     date: {
       type: Date,
       required: true,

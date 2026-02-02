@@ -7,6 +7,8 @@ import logger from '../utils/logger';
 import { calculateDistance } from '../utils/helpers';
 import { Route, OfferStatus } from '../types';
 import { getRoutePolyline } from '../utils/maps';
+import osrmService from './osrm.service';
+import roadAwareMatchingService from './road-aware-matching.service';
 
 class PoolingService {
   /**
@@ -43,7 +45,7 @@ class PoolingService {
       // Generate offer ID
       const offerId = generateUserId('PO');
 
-      // Generate polyline for route matching
+      // Generate polyline for route matching (existing logic - preserved)
       let routeWithPolyline = { ...data.route };
       try {
         const polyline = await getRoutePolyline(
@@ -59,6 +61,43 @@ class PoolingService {
         // Continue without polyline - will use fallback matching
       }
 
+      // Generate road segments for road-aware matching (additive layer)
+      let roadSegments: any[] = [];
+      try {
+        // Calculate trip start time
+        const tripDate = new Date(data.date);
+        const [hours, minutes] = data.time.split(':').map(Number);
+        tripDate.setHours(hours || 0, minutes || 0, 0, 0);
+
+        const routeResult = await osrmService.getRoute(
+          data.route.from.lat,
+          data.route.from.lng,
+          data.route.to.lat,
+          data.route.to.lng,
+          tripDate
+        );
+
+        roadSegments = routeResult.segments.map((segment) => ({
+          roadId: segment.roadId,
+          direction: segment.direction,
+          estimatedTime: segment.estimatedTime,
+          coordinates: segment.coordinates,
+          distance: segment.distance,
+          duration: segment.duration,
+        }));
+
+        logger.info(
+          `✅ Generated ${roadSegments.length} road segments for offer ${offerId} ` +
+          `(distance: ${routeResult.totalDistance.toFixed(2)}km, duration: ${routeResult.totalDuration.toFixed(2)}min)`
+        );
+      } catch (error) {
+        logger.warn(
+          `⚠️ Failed to generate road segments for offer ${offerId}, will use polyline matching only:`,
+          error
+        );
+        // Continue without road segments - will use polyline fallback
+      }
+
       // Create offer
       const offer = await PoolingOffer.create({
         offerId,
@@ -68,6 +107,7 @@ class PoolingService {
         rating: driver.rating,
         totalReviews: driver.totalReviews,
         route: routeWithPolyline,
+        roadSegments: roadSegments.length > 0 ? roadSegments : undefined, // Additive: only if available
         date: data.date,
         time: data.time,
         vehicle: {
@@ -208,13 +248,14 @@ class PoolingService {
       }
 
       // Get all matching offers first
-      let offers = await PoolingOffer.find(query).sort({ createdAt: -1 });
+      let offers: any[] = await PoolingOffer.find(query).sort({ createdAt: -1 });
       
       logger.info(`🔍 Found ${offers.length} offers matching date/status/vehicle filters`);
 
       // Filter by location if provided
-      // Edge Case 1: Support intermediate pickup/drop-off using polyline index matching
-      // Core Logic: driverStartIndex <= passengerStartIndex < passengerEndIndex <= driverEndIndex
+      // NEW: Road-aware matching with polyline fallback
+      // Edge Case 1: Support intermediate pickup/drop-off using road-aware matching
+      // Fallback: Use existing polyline index matching if road segments unavailable
       if (filters.fromLat && filters.fromLng && filters.toLat && filters.toLng) {
         const passengerFromLat = filters.fromLat;
         const passengerFromLng = filters.fromLng;
@@ -226,21 +267,59 @@ class PoolingService {
           `(${passengerFromLat},${passengerFromLng}) → (${passengerToLat},${passengerToLng})`
         );
 
-        offers = offers.filter((offer) => {
-          const driverFromLat = offer.route.from.lat;
-          const driverFromLng = offer.route.from.lng;
-          const driverToLat = offer.route.to.lat;
-          const driverToLng = offer.route.to.lng;
+        offers = await Promise.all(
+          offers.map(async (offer) => {
+            const driverFromLat = offer.route.from.lat;
+            const driverFromLng = offer.route.from.lng;
+            const driverToLat = offer.route.to.lat;
+            const driverToLng = offer.route.to.lng;
 
-          logger.info(
-            `🔍 Checking offer: Driver ${offer.route.from.address} (${driverFromLat},${driverFromLng}) → ` +
-            `${offer.route.to.address} (${driverToLat},${driverToLng})`
-          );
-          logger.info(
-            `   Passenger: (${passengerFromLat},${passengerFromLng}) → (${passengerToLat},${passengerToLng})`
-          );
+            logger.info(
+              `🔍 Checking offer: Driver ${offer.route.from.address} (${driverFromLat},${driverFromLng}) → ` +
+              `${offer.route.to.address} (${driverToLat},${driverToLng})`
+            );
+            logger.info(
+              `   Passenger: (${passengerFromLat},${passengerFromLng}) → (${passengerToLat},${passengerToLng})`
+            );
 
-          // Step 1: Check direction consistency
+            // NEW: Try road-aware matching first (if road segments available)
+            if (offer.roadSegments && offer.roadSegments.length > 0) {
+              try {
+                const roadMatchResult = await roadAwareMatchingService.matchPassengerToDriver(
+                  passengerFromLat,
+                  passengerFromLng,
+                  passengerToLat,
+                  passengerToLng,
+                  offer
+                );
+
+                if (roadMatchResult.confidence >= roadAwareMatchingService.ACCEPT_THRESHOLD) {
+                  logger.info(
+                    `✅ ROAD-AWARE MATCH: Offer ${offer.offerId} matched with confidence ${roadMatchResult.confidence.toFixed(2)}`
+                  );
+                  return { offer, matched: true };
+                } else if (roadMatchResult.confidence >= roadAwareMatchingService.FALLBACK_MIN) {
+                  logger.info(
+                    `⚠️ ROAD-AWARE FALLBACK: Offer ${offer.offerId} confidence ${roadMatchResult.confidence.toFixed(2)}, using polyline fallback`
+                  );
+                  // Fall through to polyline matching
+                } else {
+                  logger.info(
+                    `❌ ROAD-AWARE REJECT: Offer ${offer.offerId} confidence ${roadMatchResult.confidence.toFixed(2)}, rejected`
+                  );
+                  return { offer, matched: false };
+                }
+              } catch (error) {
+                logger.warn(
+                  `⚠️ Road-aware matching failed for offer ${offer.offerId}, using polyline fallback:`,
+                  error
+                );
+                // Fall through to polyline matching
+              }
+            }
+
+            // FALLBACK: Existing polyline-based matching (preserved for backward compatibility)
+            // Step 1: Check direction consistency
           const driverDirectionLat = driverToLat - driverFromLat;
           const driverDirectionLng = driverToLng - driverFromLng;
           const passengerDirectionLat = passengerToLat - passengerFromLat;
@@ -266,13 +345,13 @@ class PoolingService {
             (driverDirectionLng < 0 && passengerDirectionLng < 0) ||
             (driverDirectionLng === 0 && passengerDirectionLng === 0);
 
-          if (!latDirectionMatch || !lngDirectionMatch) {
-            logger.info(
-              `❌ NO MATCH: Direction mismatch - Driver lat=${driverDirectionLat > 0 ? '↑' : driverDirectionLat < 0 ? '↓' : '→'}, ` +
-              `Passenger lat=${passengerDirectionLat > 0 ? '↑' : passengerDirectionLat < 0 ? '↓' : '→'}`
-            );
-            return false;
-          }
+            if (!latDirectionMatch || !lngDirectionMatch) {
+              logger.info(
+                `❌ POLYLINE NO MATCH: Direction mismatch - Driver lat=${driverDirectionLat > 0 ? '↑' : driverDirectionLat < 0 ? '↓' : '→'}, ` +
+                `Passenger lat=${passengerDirectionLat > 0 ? '↑' : passengerDirectionLat < 0 ? '↓' : '→'}`
+              );
+              return { offer, matched: false };
+            }
 
           // Step 2: Check if passenger source is between driver source and destination
           const minDriverLat = Math.min(driverFromLat, driverToLat);
@@ -303,12 +382,12 @@ class PoolingService {
             `   Passenger dest (${passengerToLat.toFixed(6)}, ${passengerToLng.toFixed(6)}) in range: ${passengerDestInRange}`
           );
 
-          if (!passengerSourceInRange || !passengerDestInRange) {
-            logger.info(
-              `❌ NO MATCH: Passenger route not within driver route bounds`
-            );
-            return false;
-          }
+            if (!passengerSourceInRange || !passengerDestInRange) {
+              logger.info(
+                `❌ POLYLINE NO MATCH: Passenger route not within driver route bounds`
+              );
+              return { offer, matched: false };
+            }
 
           // Step 3: Check order (passenger source should come before passenger destination along driver route)
           // This ensures passenger is going in the same direction as driver
@@ -331,20 +410,25 @@ class PoolingService {
             }
           }
 
-          if (!orderValid) {
-            logger.info(
-              `❌ NO MATCH: Passenger route order invalid (not going in same direction as driver)`
-            );
-            return false;
-          }
+            if (!orderValid) {
+              logger.info(
+                `❌ POLYLINE NO MATCH: Passenger route order invalid (not going in same direction as driver)`
+              );
+              return { offer, matched: false };
+            }
 
-          // Coordinate-based checks passed - accept the match
-          // Skip polyline validation as coordinate-based checks are sufficient
-          logger.info(
-            `✅ MATCH: Driver ${offer.route.from.address} → ${offer.route.to.address} (coordinate-based match - all checks passed)`
-          );
-          return true;
-        });
+            // Coordinate-based checks passed - accept the match
+            // Skip polyline validation as coordinate-based checks are sufficient
+            logger.info(
+              `✅ POLYLINE MATCH: Driver ${offer.route.from.address} → ${offer.route.to.address} (coordinate-based match - all checks passed)`
+            );
+            return { offer, matched: true };
+          })
+        );
+
+        // Filter to only matched offers
+        const matchedResults = offers.filter((result: any) => result.matched);
+        offers = matchedResults.map((result: any) => result.offer);
       }
 
       // Apply pagination
