@@ -19,42 +19,9 @@ async function registerPlugins() {
   // WebSocket support
   await app.register(websocketPlugin);
 
-  // CORS - Allow multiple origins for development
-  const allowedOrigins = [
-    config.server.frontendUrl,
-    'http://localhost:19006', // Expo default
-    'http://localhost:8081',   // Expo web
-    'http://localhost:8082',   // Expo web alternate
-    'http://localhost:19000',  // Expo dev server
-    'http://localhost:19001',  // Expo dev server
-    'http://localhost:19002',  // Expo dev server
-  ].filter(Boolean); // Remove any undefined values
-
+  // CORS - allow all origins in development (Expo Go, different IPs, etc.)
   await app.register(cors, {
-    origin: (origin) => {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
-      if (!origin) {
-        return true;
-      }
-      
-      // In development, allow all localhost and network IP origins
-      if (config.server.nodeEnv === 'development') {
-        if (origin.startsWith('http://localhost:') || 
-            origin.startsWith('http://127.0.0.1:') ||
-            origin.startsWith('http://10.206.92.236:') ||
-            origin.startsWith('http://192.168.') ||
-            origin.startsWith('http://10.')) {
-          return true;
-        }
-      }
-      
-      // Check if origin is in allowed list
-      if (allowedOrigins.includes(origin)) {
-        return true;
-      }
-      
-      return false;
-    },
+    origin: config.server.nodeEnv === 'development' ? true : config.server.frontendUrl,
     credentials: true,
   });
 
@@ -87,9 +54,8 @@ async function registerPlugins() {
   await registerRoutes(app);
 }
 
-// Health check route - register before plugins to ensure it works
+// Health check route
 app.get('/health', async (_request, _reply) => {
-  logger.info('Health check requested');
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -100,21 +66,11 @@ app.get('/health', async (_request, _reply) => {
 
 // Root route
 app.get('/', async (_request, _reply) => {
-  logger.info('Root route requested');
   return {
     message: 'YAARYATRA Backend API',
     version: '1.0.0',
     status: 'running',
   };
-});
-
-// Add request logging hook
-app.addHook('onRequest', async (request) => {
-  logger.info(`📥 ${request.method} ${request.url} from ${request.ip}`);
-});
-
-app.addHook('onResponse', async (request, reply) => {
-  logger.info(`📤 ${request.method} ${request.url} - ${reply.statusCode}`, { statusCode: reply.statusCode });
 });
 
 // Start server
@@ -175,10 +131,10 @@ async function start() {
       logger.warn('Could not start trip scheduler:', error);
     }
 
-    // Start server - use 127.0.0.1 for localhost compatibility
+    // Start server
     const address = await app.listen({
       port: config.server.port,
-      host: '0.0.0.0', // Accept connections from any IP (localhost, network IP 10.206.92.236, etc.)
+      host: '0.0.0.0',
     });
 
     logger.info(`✅ Server listening on ${address}`);
